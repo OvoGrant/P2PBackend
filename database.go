@@ -12,6 +12,7 @@ var redis_options = &redis.Options{
 	Addr:     "localhost:6379",
 	Password: "",
 	DB:       0,
+	DisableIndentity: true,
 }
 
 var Client *redis.Client
