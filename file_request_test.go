@@ -27,6 +27,7 @@ func TestHandleConnection(t *testing.T) {
 	AddPeerToFile("peerOne", "castigate")
 	AddPeerToFile("peerTwo", "castigate")
 	AddPeerToFile("peerThree", "masticate")
+
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
 			one, two := net.Pipe()
@@ -50,4 +51,3 @@ func TestHandleConnection(t *testing.T) {
 		})
 	}
 }
-

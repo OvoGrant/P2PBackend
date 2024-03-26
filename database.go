@@ -2,38 +2,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
 )
 
-const ACTIVE_PEERS = "active_peers"
+const activePeers = "active_peers"
 
-var redis_options = &redis.Options{
-	Addr:     "localhost:6379",
-	Password: "",
-	DB:       0,
+var redisOptions = &redis.Options{
+	Addr:             "localhost:6379",
+	Password:         "",
+	DB:               0,
 	DisableIndentity: true,
 }
 
 var Client *redis.Client
 
 func initClient() {
-	Client = redis.NewClient(redis_options)
+	Client = redis.NewClient(redisOptions)
 }
 
-func Close() {
-	Client.Close()
-}
-
-func PeerActive(peer string) bool {
-	res := Client.SIsMember(context.Background(), ACTIVE_PEERS, peer)
-
-	return res.Val()
-}
 func SetPeerActive(peer string) bool {
-	fmt.Println(peer)
 
-	res := Client.SAdd(context.Background(), ACTIVE_PEERS, peer)
+	res := Client.SAdd(context.Background(), activePeers, peer)
 
 	return res.Val() == 1
 }
@@ -55,11 +46,19 @@ func GetPeersWithFile(file string) ([]string, error) {
 		return nil, err
 	}
 
-	fmt.Println("Result:", result)
+	if result == 0 {
+		return nil, errors.New("file not found")
+	}
 
 	//if the file is found then return this
-	val := Client.SInter(context.Background(), file, ACTIVE_PEERS)
+	val := Client.SInter(context.Background(), file, activePeers)
+
+	fmt.Println(val.Val())
 
 	//we will return only the first 10 peers for the sake of brevity
 	return val.Val(), nil
+}
+
+func ClearPeerSet() {
+	Client.Del(context.Background(), activePeers)
 }
