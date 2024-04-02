@@ -2,16 +2,21 @@ package main
 
 import (
 	"bufio"
-	"fmt"
+	"encoding/json"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"time"
 )
 
+// UDP_SERVER_PORT represents used to listen for udp connections
 const UDP_SERVER_PORT = ":4911"
+
+// TCP_SERVER_PORT represents the port used to listen for incoming TCP connections
 const TCP_SERVER_PORT = ":4912"
+
+// PEER_TTL represents the maximum time a peer has to contact the server before it is deemed inactive
+const PEER_TTL = 60
 
 func main() {
 
@@ -23,110 +28,147 @@ func main() {
 	runTCP()
 }
 
+// runTCP is a function that runs a TCP server capable of handling requests for a file
 func runTCP() {
 
-	//create the tcp listener
+	//create the listener on the port
 	listener, err := net.Listen("tcp", TCP_SERVER_PORT)
 
-	defer listener.Close()
+	defer func() {
 
+		err = listener.Close()
+
+	}()
+
+	//if there is an error starting the server log the error and shutdown
 	if err != nil {
-		fmt.Println("Error: ", err)
+		log.Fatal(err)
 	}
 
+	//create infinite loop to listen for incoming connections
 	for {
 
 		conn, err := listener.Accept()
 
+		//if there is an error accepting the connection print the error and log it
 		if err != nil {
-			fmt.Println("Error: err ")
+			ErrorLogger.Println(err)
 			continue
 		}
 
+		//handle the connection in a separate go routine
 		go handleConnection(conn)
 	}
 
 }
 
+// ResetPeerSet is a function that runs continuously in a go routine and periodically sets peers as inactive
 func ResetPeerSet() {
 
 	for {
-		time.Sleep(60 * time.Second)
+		time.Sleep(PEER_TTL * time.Second)
 		ClearPeerSet()
 		DeletionLogger.Println("Deleted all peers from peer set")
 	}
 
 }
 
+// RunUDP runs continuously in a go routine and handles incoming UDP messages
 func RunUDP() {
 
+	//get the udp address
 	address, err := net.ResolveUDPAddr("udp4", UDP_SERVER_PORT)
 
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 
 	conn, err := net.ListenUDP("udp4", address)
 
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
 
+	//for every incoming connection handle it
 	for {
 		handleUDPConnection(conn)
 	}
 
 }
 
+// handleUDPConnection handles the incoming UDP messages
 func handleUDPConnection(conn *net.UDPConn) {
+
+	//make a buffer to store the message
 	buffer := make([]byte, 1024)
 
+	//read the incoming message into the buffer
 	n, addr, err := conn.ReadFromUDP(buffer)
-
-	filenames := strings.Split(string(buffer[:n]), "\n")
 
 	ConnectionLogger.Printf("Incoming message from %s\n", addr.IP.String())
 
-	//set the peer that made the connection as active
-	SetPeerActive(addr.IP.String())
+	//extract the body data by converting bytes to a string and splitting at line separators
+	bodyData := strings.Split(string(buffer[:n]), "\n")
 
-	if len(filenames) == 1 {
+	//extract peer data stored on the first line
+	peerInfo := bodyData[0]
+
+	//create peer struct
+	var peer Peer
+
+	//marshal json data into the peer structure
+	json.Unmarshal([]byte(peerInfo), &peer)
+
+	//add address information
+	peer.Address = addr.IP.String()
+
+	res, err := json.Marshal(peer)
+
+	//set the peer that made the connection as active
+	SetPeerActive(string(res))
+
+	if len(bodyData) == 1 {
 		conn.WriteToUDP([]byte("ACK"), addr)
 		return
 	}
 
-	//add the peer to files peer set
+	//filenames should be stored in all the subsequenc lines
+	filenames := bodyData[1:]
+
+	//add the peers to the set
 	for _, filename := range filenames {
-		IndexingLogger.Printf("Adding %s to %s set\n", addr.IP.String(), filename)
-		AddPeerToFile(addr.IP.String(), filename)
+		IndexingLogger.Printf("Adding %s to %s set\n", string(res), filename)
+		AddPeerToFile(string(res), filename)
 	}
 
-	conn.WriteToUDP([]byte("ACK"), addr)
+	_, err = conn.WriteToUDP([]byte("ACK"), addr)
 
 	if err != nil {
-		log.Println(err)
+		ErrorLogger.Println(err)
 		return
 	}
 }
 
-// this function handles all the tcp logic
+// handleConnection is a function that handles in coming TCP requests for a file
 func handleConnection(conn net.Conn) {
 
-	defer conn.Close()
+	defer func() {
+
+		conn.Close()
+
+	}()
 
 	reader := bufio.NewScanner(conn)
 
 	if !reader.Scan() {
-		fmt.Println("Error: ", reader.Err())
+		ErrorLogger.Println(reader.Err())
 		conn.Write([]byte("NACK\nFormat Error"))
 		return
 	}
 
 	line := reader.Text()
 
-	ConnectionLogger.Printf("Received request from %s for %s\n", conn.LocalAddr().String(), line)
+	ConnectionLogger.Printf("Received request from %s for %s\n", conn.RemoteAddr().String(), line)
 
 	peers, err := GetPeersWithFile(line)
 
@@ -143,6 +185,7 @@ func handleConnection(conn net.Conn) {
 	}
 
 	conn.Write([]byte("ACK\n"))
+
 	conn.Write([]byte(strings.Join(peers, "\n")))
 
 }
